@@ -1,27 +1,38 @@
-FROM alpine:3.19
+FROM golang:1.21-alpine AS builder
 
-RUN apk add --no-cache \
-    curl \
-    bash \
-    ca-certificates \
-    socat \
-    tzdata \
-    sqlite \
-    nginx \
-    gettext \
-    && ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
+WORKDIR /app
 
-# دانلود و نصب 3x-ui
-RUN curl -L https://github.com/mhsanaei/3x-ui/releases/download/v3.4.2/x-ui-linux-amd64.tar.gz -o /tmp/x-ui.tar.gz \
-    && tar -xzf /tmp/x-ui.tar.gz -C /usr/local/ \
-    && rm /tmp/x-ui.tar.gz \
-    && chmod +x /usr/local/x-ui/x-ui
+ARG TARGETARCH
 
-RUN mkdir -p /etc/x-ui /var/log/x-ui
+RUN apk add --no-cache build-base gcc wget git
 
-COPY nginx.conf.template /etc/nginx/nginx.conf.template
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY . .
 
-# Railway پورت رو از طریق متغیر $PORT تزریق می‌کند
-CMD ["/start.sh"]
+RUN go mod download
+
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} go build -o build/x-ui main.go
+
+FROM alpine:latest
+
+ENV TZ=Asia/Tehran
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata bash
+
+COPY --from=builder /app/build/x-ui /app/x-ui
+COPY --from=builder /app/x-ui.sh /usr/bin/x-ui
+COPY --from=builder /app/DockerInit.sh /app/DockerInit.sh
+COPY start.sh /app/start.sh
+
+RUN sed -i 's/\r$//' /app/start.sh /app/DockerInit.sh /usr/bin/x-ui
+
+RUN chmod +x \
+    /app/x-ui \
+    /app/start.sh \
+    /app/DockerInit.sh \
+    /usr/bin/x-ui
+
+VOLUME [ "/etc/x-ui" ]
+
+CMD [ "/app/start.sh" ]
